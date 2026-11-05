@@ -28,6 +28,7 @@ from .protocol import (
 # and never returns on an idle socket, so we drive the fragment loop ourselves to
 # honour a deadline. CURL_SOCKET_BAD is libcurl's "no active socket" sentinel.
 _CURL_SOCKET_BAD = -1
+CONNECT_ATTEMPTS = 3  # tries for the WebSocket connect when the network drops it
 
 
 class ClearanceRequired(RuntimeError):
@@ -112,12 +113,18 @@ class Copilot(AbstractProvider):
 
         with Session(timeout=timeout, proxy=proxy, impersonate="chrome",
                      headers={"Origin": "https://copilot.com"}) as session:
-            try:
-                wss = session.ws_connect(websocket_url)
-            except CurlError as exc:
-                if "401" in str(exc) or "403" in str(exc):
-                    raise AuthExpired(f"Copilot rejected the access token: {exc}") from exc
-                raise
+            # Connection-level failures (e.g. curl error 7) happen before any text is
+            # sent, so retrying the connect is safe. Auth rejections are not retried.
+            for attempt in range(CONNECT_ATTEMPTS):
+                try:
+                    wss = session.ws_connect(websocket_url)
+                    break
+                except CurlError as exc:
+                    if "401" in str(exc) or "403" in str(exc):
+                        raise AuthExpired(f"Copilot rejected the access token: {exc}") from exc
+                    if attempt == CONNECT_ATTEMPTS - 1:
+                        raise
+                    time.sleep(2 * (attempt + 1))
             wss.send(HANDSHAKE, CurlWsFlag.TEXT)
             wss.send(PING, CurlWsFlag.TEXT)
             wss.send(encode(chat_frame(prompt, request_id, session_id, start_of_session)),
