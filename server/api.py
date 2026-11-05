@@ -2,6 +2,7 @@
 
 import threading
 import time
+import traceback
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -137,6 +138,8 @@ def chat_completions(req: ChatCompletionRequest):
             content={"error": {"message": _CLEARANCE_HELP, "type": "clearance_required"}},
         )
     except Exception as exc:
+        # Print the full error to the server window so a 502 can be diagnosed.
+        traceback.print_exc()
         return JSONResponse(
             status_code=502,
             content={"error": {"message": str(exc), "type": "upstream_error"}},
