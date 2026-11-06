@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from copilot import CopilotClient
 from copilot.driver import ClearanceRequired
+from copilot.web_delete import WebDeleteError, delete_conversation_in_browser
 
 from .config import MODEL_NAME, RATE_LIMIT_BURST, RATE_LIMIT_RPM
 from .openai_format import (
@@ -145,6 +146,27 @@ def chat_completions(req: ChatCompletionRequest):
             content={"error": {"message": str(exc), "type": "upstream_error"}},
         )
     return completion_response(reply.text, model, reply.conversation_id)
+
+
+@app.delete("/v1/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str):
+    """Delete one Copilot web conversation through the saved browser profile.
+    Returns {"deleted": true} when Copilot confirms it."""
+    try:
+        with _upstream_lock:  # the profile folder can be opened by one browser at a time
+            deleted = delete_conversation_in_browser(conversation_id)
+    except WebDeleteError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"message": str(exc), "type": "delete_error"}},
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"message": str(exc), "type": "delete_error"}},
+        )
+    return {"deleted": bool(deleted), "conversation_id": conversation_id}
 
 
 @app.get("/")
